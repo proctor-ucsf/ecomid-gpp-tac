@@ -19,7 +19,6 @@ output:
 
 ```{r preamble, message = FALSE}
 source("0-config.R")
-# library(gtsummary)
 ```
 
 # Load Joined GPP TAC dataset

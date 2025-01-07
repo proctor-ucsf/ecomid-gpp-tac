@@ -1,0 +1,164 @@
+---
+title: "Enteric pathogen infection measured by GPP and TAC multiplex assays"
+subtitle: "Analysis of quantitative measures vis-a-vis infection"
+author: "Nikolina Walas (nwalas@berkeley.edu), Ben Arnold (ben.arnold@ucsf.edu)"
+date: "updated: `r Sys.time()`"
+output: 
+  html_document:
+    theme: default
+    highlight: pygments
+    code_folding: hide
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+---
+
+# Load configuration file
+
+```{r preamble, message = FALSE}
+source("0-config.R")
+```
+
+# Load public datasets
+
+```{r load clean datasets}
+#---------------------------------
+# load clean datasets
+# created by 2-gpp-tac-comp-data-processing.R
+#---------------------------------
+
+# GPP-TAC with full set that has MFI values
+gpp_tac <- read_rds(here("data","ecomid_gpp_tac_comp_target_mfi_public_2025-01-07.rds"))
+
+# TAC data with Ct values
+tac_ct_2 <- read_rds(here("data","ecomid_gpp_tac_comp_target_ct_public_2025-01-07.rds")) 
+```
+
+
+# SI Figure 1
+
+Summarize MFI values by GPP and TAC status
+
+```{r make vars for analysis}
+#---------------------------------
+# make a few vars for convenience
+#---------------------------------
+gpp_mfi2 <- gpp_tac %>%
+  # drop the MFI values for pathogens not on the TAC assay
+  filter(!is.na(tac_pos)) %>%
+  # create a categorical factor that summarizes the 4 possible GPP-TAC call combos
+  mutate(gpp_tac_status = case_when(
+    gpp_pos == "NEG" & tac_pos == "NEG" ~ "GPP(-) TAC(-)",
+    gpp_pos == "NEG" & tac_pos == "POS" ~ "GPP(-) TAC(+)",
+    gpp_pos == "POS" & tac_pos == "NEG" ~ "GPP(+) TAC(-)",
+    gpp_pos == "POS" & tac_pos == "POS" ~ "GPP(+) TAC(+)",
+  ), 
+  gpp_tac_status = factor(gpp_tac_status, levels=c("GPP(-) TAC(-)","GPP(-) TAC(+)","GPP(+) TAC(-)","GPP(+) TAC(+)"))
+         ) %>%
+  # create a log10 MFI value
+  mutate(log10mfi = ifelse(mfi<=0, log10(0.1), log10(mfi)),
+         log10mficut = log10(mficut)
+         ) %>%
+  # order gpp targets
+  mutate(gpp_target =factor(gpp_target, levels = target_levels))
+
+```
+
+
+Focusing on the GPP+ samples (top two rows), for many pathogens it appears that samples that are GPP+ but TAC- tend to be lower intensity infections based on the MFI values.  Particularly clear with  Adenovirus, ETEC, Shigella, STEC, and Giardia, and to lesser degree Campylobacter.  However, for Salmonella it's quite clear that a majority of samples identified as negative by TAC are strong positives by GPP.  We believe the GPP assay is using the inVA gene (https://pubmed.ncbi.nlm.nih.gov/1528198/) and Flagellin C (fliC, https://pubmed.ncbi.nlm.nih.gov/14500664/) targets for Salmonella. This may differ from the S. enterica target used on TAC?
+
+(also note: there are some high Salmonella MFI values even for the GPP- TAC- samples, because the positive determination for TAC is a combination of two targets and a moderate MFI of the inVA gene is considered indeterminant, and so the second target is used to determine positivity)
+
+```{r summarize mfi by gpp and tac status, fig.width = 8, fig.height = 8}
+
+set.seed(12345) # set seed b/c of jitter to get identical plots
+plot_mfi_by_agreement <- ggplot(data=gpp_mfi2, aes(x = gpp_tac_status, y=log10mfi)) +
+  facet_wrap(~gpp_target, ncol=3,nrow=5) + 
+  geom_jitter(width=0.25, alpha = 0.5, col=cbpal[6]) +
+  geom_boxplot(outlier.color = NA, outlier.shape = NA, fill = NA) +
+  scale_y_continuous(breaks=seq(1.5,4,by=0.5)) +
+  coord_flip(ylim=c(1.5,4)) + 
+  labs(x = "", y="log10 Luminex response (MFI-bg)") +
+  theme_minimal() +
+  theme(
+    panel.grid.minor.x=element_blank(),
+    panel.grid.major.y=element_blank()
+  )
+
+plot_mfi_by_agreement
+
+ggsave(filename=here("output","gpp-tac-comp-target-GPP-mfi_20240527.png"), plot_mfi_by_agreement, device="png", 
+       width=220, height=220, unit="mm")
+
+
+```
+
+# SI Figure 2
+
+Summarize TAC Ct values by GPP and TAC status
+
+```{r tac ct values}
+#---------------------------------
+# join the TAC ct values to
+# the MFI data by gpp_target
+# 
+# NOTE: this will be a 1:many
+# join, as there are often
+# several TAC targets that 
+# align with each GPP target
+#
+# impute empty CT values at 40
+#---------------------------------
+gpp_tac_2 <- gpp_mfi2 
+
+gpp_tac_2 <- gpp_tac_2 %>% left_join(tac_ct_2, join_by(public_id,gpp_target), relationship = "one-to-many") %>%
+  mutate(tac_ct = ifelse(is.na(tac_ct),40,tac_ct)) %>%
+  # reorder the agreement factor slightly to put the
+  # more interesting groups (TAC+) together
+  mutate(
+      gpp_tac_status = factor(gpp_tac_status, levels=c("GPP(-) TAC(-)","GPP(+) TAC(-)","GPP(-) TAC(+)","GPP(+) TAC(+)"))
+
+  ) %>%
+  # order gpp targets
+  mutate(gpp_target =factor(gpp_target, levels = target_levels))
+
+```
+
+Note!  The category order has changed below compared to the previous plot to place the TAC + categories on top. Samples with missing Ct values were imputed at 40 to visualize.  The GPP and TAC infection status is at the pathogen/strain level. If there were multiple targets on the TAC assay for that pathogen/strain, then bear in mind that infection status incorporates information across multiple targets (using the OR operator). 
+
+Focusing on the TAC+ samples (top two rows), for many pathogens it appears that samples that are TAC+ but GPP- are low intensity infections.  Particularly clear with  Norovirus, ETEC, Cryptosporidium, Giardia, and to lesser degree Campylobacter.  However, for Adenovirus it's quite clear that the GPP assay is missing strong positives by the hexon gene target (1st row, 2nd column). 
+
+```{r summarize ct by gpp and tac status, fig.width = 8, fig.height = 12}
+
+set.seed(12345) # set seed b/c of jitter to get identical plots
+plot_ct_by_agreement <- ggplot(data=gpp_tac_2, aes(x = gpp_tac_status, y=tac_ct)) +
+  facet_wrap(~gpp_target + tac_target, ncol=4,nrow=6) + 
+  geom_jitter(width=0.25, height=0, alpha = 0.5, col=cbpal[4]) +
+  geom_boxplot(outlier.color = NA, outlier.shape = NA, fill = NA) +
+  scale_y_reverse(breaks = seq(10,40,by=5)) + 
+  coord_flip(ylim=c(40,10)) +
+  labs(x = "", y="TAC Ct value") +
+  theme_minimal() +
+  theme(
+    panel.grid.minor.x=element_blank(),
+    panel.grid.major.y=element_blank()
+  )
+
+plot_ct_by_agreement
+
+ggsave(filename=here("output","gpp-tac-comp-target-TAC-ct_20240527.png"), plot_ct_by_agreement, device="png", 
+       width=220, height=220, unit="mm")
+
+
+```
+
+
+# Session info
+```{r session info}
+sessionInfo()
+```
+
+
+

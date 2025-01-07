@@ -1,0 +1,332 @@
+---
+title: "Enteric pathogen infection measured by GPP and TAC multiplex assays"
+subtitle: "Analysis of prevalence and agreement between assays at target level"
+author: "Nikolina Walas (nwalas@berkeley.edu), Ben Arnold (ben.arnold@ucsf.edu)"
+date: "updated: `r Sys.time()`"
+output: 
+  html_document:
+    theme: default
+    highlight: pygments
+    code_folding: hide
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+---
+
+Purpose: the purpose of this file is to investigate the results from the GPP and TAC assay and format preliminary figures for the GPP-TAC manuscript. The input file for this analysis was generated from the R script 1-gpp-tac-comp-data-processing.R
+
+# Load configuration file
+
+```{r preamble, message = FALSE}
+source("0-config.R")
+# library(gtsummary)
+```
+
+# Read in prevalence and agreement estimates
+
+```{r load gpp data}
+#---------------------------------
+# load formatted data
+# created by 3-gpp-tac-comp-positive-negative-analysis-gpp-targets.Rmd
+#---------------------------------
+dres <- read_rds(here("output","gpp_vs_tac_gpp_target_estimates.rds"))
+
+```
+
+# Table 1
+
+Include breakdown of sample agreement by the two assays, estimate of agreement, and McNemar's P for differences
+
+```{r table of agreement}
+tab_agree <- dres %>%
+  select(gpp_target,gpp_n_tac_n,gpp_p_tac_n,gpp_n_tac_p,gpp_p_tac_p,agree_prev_print,kappa_print,mcnemar_p)
+
+kbl(tab_agree, col.names = c("Pathogen Target","GPP(-) TAC(-)","GPP(+) TAC(-)", "GPP(-) TAC(+)","GPP(+) TAC(+)","Agreement (95% CI)", "Kappa (95% CI)",  "McNemar's P"),  digits = 3, 
+    caption = "Test results and estimates of agreement between GPP and TAC multiplex PCR assays") %>%
+  kableExtra::kable_styling(bootstrap_options = "striped") %>%
+  pack_rows(group_label = "Viruses",start_row=1, end_row = 4, label_row_css = "") %>%
+  pack_rows(group_label = "Bacteria",start_row=5, end_row = 11, label_row_css = "") %>%
+  pack_rows(group_label = "Protozoa",start_row=12, end_row = 14, label_row_css = "") 
+
+#version 2 that includes gpp and tac prevalence each 
+# (not used)
+# tab_agree_2 <- dres %>%
+#   mutate(gpp_prev_2 = paste0(round(gpp_prev*100, 1), " (", round(gpp_prev_min95*100, 1), ", ", round(gpp_prev_max95*100, 1), ")"),
+#          tac_prev_2 = paste0(round(tac_prev*100, 1), " (", round(tac_prev_min95*100, 1), ", ", round(tac_prev_max95*100, 1), ")")) %>% 
+#   select(gpp_target,gpp_n_tac_n,
+#          gpp_p_tac_n,gpp_n_tac_p,
+#          gpp_p_tac_p, gpp_prev_2, 
+#          tac_prev_2, agree_prev_print,
+#          kappa_print,mcnemar_p)
+# 
+# 
+# kbl(tab_agree_2, col.names = c("Pathogen Target","GPP(-) TAC(-)","GPP(+) TAC(-)", "GPP(-) TAC(+)","GPP(+) TAC(+)","GPP Prevalence", "TAC Prevlance", "Agreement (95% CI)", "Kappa (95% CI)",  "McNemar's P"),  digits = 3, 
+#     caption = "Test results and estimates of agreement between GPP and TAC multiplex PCR assays") %>%
+#   kableExtra::kable_styling(bootstrap_options = "striped") %>%
+#   pack_rows(group_label = "Viruses",start_row=1, end_row = 4, label_row_css = "") %>%
+#   pack_rows(group_label = "Bacteria",start_row=5, end_row = 11, label_row_css = "") %>%
+#   pack_rows(group_label = "Protozoa",start_row=12, end_row = 14, label_row_css = "") 
+
+write_csv(tab_agree, "../output/gpp-tac-table1.csv")
+```
+
+# Figure 1
+
+Prevalence for each of the two assays. Stratified by taxa and sorted by GPP prevalence.
+
+```{r plot prevalence}
+#-------------------------------
+# pivot GPP and TAC estimates
+# longer for ggplot
+#-------------------------------
+prev_tab_gpp <- dres %>%
+  select(taxa,gpp_target, prev = gpp_prev, prev_min95 = gpp_prev_min95, prev_max95 = gpp_prev_max95) %>%
+  mutate(assay = "GPP")
+
+prev_tab_plot <- dres %>%
+  select(taxa,gpp_target, prev = tac_prev, prev_min95 = tac_prev_min95, prev_max95 = tac_prev_max95) %>%
+  mutate(assay = "TAC") %>%
+  bind_rows(prev_tab_gpp) %>%
+  # drop Salmonella to better display the data and omit this very discordant result
+  # filter(gpp_target != "Salmonella") %>%
+  mutate(assay = factor(assay),
+         gpp_target =factor(gpp_target, levels = dres$gpp_target[order(dres$gpp_prev)])
+         # gpp_target =factor(gpp_target, levels = rev(target_levels))
+         ) %>%
+  arrange(gpp_target,assay)
+
+pcols <- cbpal[c(2,4)]
+
+plot_prev <- ggplot(data=prev_tab_plot, aes(x = gpp_target, color = assay, fill = assay)) +
+  facet_grid(.~taxa, scales="free") +
+  geom_errorbar(aes(ymin = prev_min95, ymax = prev_max95), width = 0.2, position = position_nudge(x=c(-0.1,0.1))) +
+  geom_point(aes(y=prev), position = position_nudge(x=c(-0.1,+0.1))) +
+  scale_y_continuous(breaks = seq(0,0.5, by=0.1), labels = 100*seq(0,0.5, by=0.1)) +
+  scale_color_manual(values=pcols) +
+  labs(x="", y = "Infection prevalence (%)") +
+  coord_cartesian(ylim=c(0,0.5)) + 
+  theme_bw() +
+  theme(
+    legend.position = c(0.12,0.8),
+     # legend.position = "bottom"  ,
+    # legend.direction = "horizontal",
+    axis.text.x = element_text(angle=45, hjust=1),
+   
+    strip.placement = "outside"
+    )
+
+# plot_prev
+
+# ggsave(filename=here("output","gpp-tac-comp-target-prev-ests.png"), plot_prev, device="png")
+
+```
+
+
+```{r plot prev separately}
+#-------------------------------
+# repeat the plot above, but
+# make each taxa panel manually
+# to ensure similar x-spacing
+# for each target (might be better
+# way to do this). This is a 
+# hassle, but looks a bit better
+#-------------------------------
+
+pcols <- cbpal[c(2,4)]
+
+# Viruses
+plot_prev_viruses <- ggplot(data=prev_tab_plot %>% filter(taxa=="Viruses"), aes(x = gpp_target, color = assay, fill = assay)) +
+  facet_grid(.~taxa, scales="free") +
+  geom_errorbar(aes(ymin = prev_min95, ymax = prev_max95), width = 0.2, position = position_nudge(x=c(-0.1,0.1))) +
+  geom_point(aes(y=prev), position = position_nudge(x=c(-0.1,0.1))) +
+  scale_y_continuous(breaks = seq(0,1, by=0.1), labels = 100*seq(0,1, by=0.1)) +
+  scale_color_manual(values=pcols) +
+  labs(x="", y = "Infection prevalence (%)") +
+  coord_cartesian(ylim=c(0,0.9)) + 
+  scale_x_discrete(labels = c("Rotavirus_A" = "Rotavirus",
+                                    "Norovirus_GI" = "Norovirus GI",
+                                  "Norovirus_GII" = "Norovirus GII",
+                           "Adenovirus_40_41" = "Adenovirus (40/41)")) +
+  # add McNemar's statistical significance annotation
+  annotate("text",x="Rotavirus_A",y=0.17,label = "*", size=8) +
+  theme_bw() +
+  theme(
+    legend.position = c(0.35,0.74),
+    axis.text.x = element_text(angle=45, hjust=1),
+    # axis.text.x=element_blank(), 
+     plot.margin = unit(c(0,0,0,0),"pt"),
+       strip.placement = "outside"
+    ) 
+
+# Bacteria
+plot_prev_bact <- ggplot(data=prev_tab_plot %>% filter(taxa=="Bacteria"), aes(x = gpp_target, color = assay, fill = assay)) +
+  facet_grid(.~taxa, scales="free") +
+  geom_errorbar(aes(ymin = prev_min95, ymax = prev_max95), width = 0.2, position = position_nudge(x=c(-0.1,0.1))) +
+  geom_point(aes(y=prev), position = position_nudge(x=c(-0.1,0.1))) +
+  scale_y_continuous(breaks = seq(0,1, by=0.1), labels = 100*seq(0,1, by=0.1)) +
+  scale_color_manual(values=pcols) +
+  labs(x="", y = "") +
+  coord_cartesian(ylim=c(0,0.9)) + 
+  scale_x_discrete(labels = c("ETEC_ST" = "ST-ETEC",
+                                    "ETEC_LT" = "LT-ETEC",
+                           "STEC_stx2" = "STEC-stx2",
+                           "STEC_stx1" = "STEC-stx1", 
+                           "Shigella" = expression(paste( italic("Shigella")," spp.")),
+                           "Salmonella" = expression(paste( italic("Salmonella")," spp.")),
+                           "Campylobacter" = expression(paste( italic("Campylobacter")," spp.")) )
+                   ) +
+  # add McNemar's statistical significance annotation
+  annotate("text",x="ETEC_ST",y=0.25,label = "*", size=8) + 
+  annotate("text",x="Shigella",y=0.25,label = "*", size=8) + 
+  annotate("text",x="Campylobacter",y=0.40,label = "*", size=8) + 
+  annotate("text",x="Salmonella",y=0.87,label = "*", size=8) + 
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle=45, hjust=1),
+    # axis.text.x=element_blank(), 
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+     plot.margin = unit(c(0,0,0,0),"pt"),
+    strip.placement = "outside"
+    )
+
+# Protozoa
+plot_prev_prot <- ggplot(data=prev_tab_plot %>% filter(taxa=="Protozoa"), aes(x = gpp_target, color = assay, fill = assay)) +
+  facet_grid(.~taxa, scales="free") +
+  geom_errorbar(aes(ymin = prev_min95, ymax = prev_max95), width = 0.2, position = position_nudge(x=c(-0.1,0.1))) +
+  geom_point(aes(y=prev), position = position_nudge(x=c(-0.1,0.1))) +
+  scale_y_continuous(breaks = seq(0,1, by=0.1), labels = 100*seq(0,1, by=0.1)) +
+  scale_color_manual(values=pcols) +
+  labs(x="", y = "") +
+  coord_cartesian(ylim=c(0,0.9)) + 
+  scale_x_discrete(labels = c("Entamoeba_histolytica" = expression(italic("Entamoeba histolytica")),
+                                    "Cryptosporidium" = expression(paste( italic("Cryptosporidium")," spp.")),
+                           "Giardia" = expression( paste( italic("Giardia")," spp.")))
+                   ) +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle=45, hjust=1),
+    # axis.title.y = ggtext::element_markdown(),
+    # axis.text.x=element_blank(), 
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+     plot.margin = unit(c(0,0,0,0),"pt"),
+    strip.placement = "outside"
+    )
+
+# combine by hand
+plot_prev <- plot_prev_viruses + plot_prev_bact +  plot_prev_prot + plot_layout(ncol=3,nrow=1,widths = c(0.6,1,0.4))
+plot_prev
+
+ggsave(filename=here("output","gpp-tac-comp-target-prev-ests.png"), plot_prev, device="png", 
+       width=180, height=100, unit="mm")
+
+
+```
+
+
+
+# Supplemental Table 3
+
+Estimates of prevalence by each assay, including all targets.  These are detailed estimates that are plotted in Figure 1 (above)
+
+
+```{r prevalence table}
+#-------------------------------
+# table of prevalence estimates
+#-------------------------------
+kbl(dres %>% select(gpp_target, ntot, gpp_pos, gpp_prev_print, tac_pos, tac_prev_print), col.names = c("GPP Target","N","GPP pos","GPP Prev (95% CI)","TAC pos","TAC Prev (95% CI)")) %>%
+  kableExtra::kable_styling(bootstrap_options = "striped") %>%
+  pack_rows(group_label = "Viruses",start_row=1, end_row = 4, label_row_css = "") %>%
+  pack_rows(group_label = "Bacteria",start_row=5, end_row = 11, label_row_css = "") %>%
+  pack_rows(group_label = "Protozoa",start_row=12, end_row = 14, label_row_css = "")
+
+```
+
+# Plot kappa and agreement
+
+Plot kappa and agreement by target. Estimates are sorted by kappa. (not used, but just for reference)
+
+```{r plot kappa}
+#-------------------------------
+# plot kappa estimates
+#-------------------------------
+kappa_sum_plot <- dres %>%
+  mutate(gpp_target =factor(gpp_target, levels = dres$gpp_target[order(dres$kappa, decreasing=TRUE)])) %>%
+  arrange(gpp_target)
+
+d_kappa_labs <- data.frame(y=c(0.1,0.3,0.5,0.7,0.9),pathogen=rep(kappa_sum_plot$gpp_target[nrow(kappa_sum_plot)],5),labs=c("slight","fair","moderate","substantial","perfect"))
+
+
+pcols <- cbpal[4]
+plot_kappa <- ggplot(data=kappa_sum_plot, aes(x = gpp_target)) +
+  geom_hline(yintercept=c(0,0.2,0.4,0.6,0.8),color="gray80") +
+  geom_errorbar(aes(ymin = kappa_min95, ymax = kappa_max95), width = 0.2, color=pcols) +
+  geom_point(aes(y=kappa), size=3, color=pcols) +
+  geom_text(data=d_kappa_labs,aes(x=pathogen,y=y,label=labs,hjust=1), position = position_nudge(x=1),color="gray40") +
+  scale_y_continuous(breaks = seq(-0.2,1, by=0.1)) +
+  scale_color_manual(values=pcols) +
+  labs(x="", y = "Kappa statistic", tag="A") +
+  coord_cartesian(xlim=c(1,14.5)) + 
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle=45, hjust=1)
+  )
+
+plot_kappa
+
+```
+
+
+```{r plot agreement}
+#-------------------------------
+# plot agreement
+#-------------------------------
+agree_plot <- dres %>%
+  mutate(gpp_target =factor(gpp_target, levels = dres$gpp_target[order(dres$kappa, decreasing=TRUE)])) %>%
+  arrange(gpp_target)
+
+pcols <- cbpal[4]
+plot_agree <- ggplot(data=agree_plot, aes(x = gpp_target)) +
+  # geom_hline(yintercept=c(0,0.2,0.4,0.6,0.8),color="gray70") +
+  geom_errorbar(aes(ymin = agree_prev_min95, ymax = agree_prev_max95), width = 0.2, color=pcols) +
+  geom_point(aes(y=agree_prev), size=3, color=pcols) +
+  # geom_text(data=d_kappa_labs,aes(x=pathogen,y=y,label=labs), position = position_nudge(x=0.5),color="gray40") +
+  scale_y_continuous(breaks = seq(0,1, by=0.1), labels=seq(0,1, by=0.1)*100) +
+  scale_color_manual(values=pcols) +
+  labs(x="Pathogen target", y = "Agreement (%)", tag="B") +
+  coord_cartesian(xlim=c(1,14.5), ylim=c(0,1)) + 
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle=45, hjust=1)
+  )
+
+# plot_agree
+
+```
+
+```{r composite figure kappa agreement, fig.height = 10}
+#-------------------------------
+# combine kappa and agreement
+# estimates into a single figure
+#-------------------------------
+
+plot_kappa_agree <- plot_kappa + plot_agree + plot_layout(ncol=1,nrow=2, tag_level="new")
+
+plot_kappa_agree
+# ggsave(filename=here("output","gpp-tac-comp-target-kappa-agree.png"), plot_kappa_agree, device="png", 
+#        width=170, height=200, unit="mm")
+```
+
+# Session info
+```{r session info}
+sessionInfo()
+```
+
+```
+
+

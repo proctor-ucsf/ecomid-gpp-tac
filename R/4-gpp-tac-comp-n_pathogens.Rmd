@@ -1,0 +1,213 @@
+---
+title: "Enteric pathogen infection measured by GPP and TAC multiplex assays"
+subtitle: "Comparison of number of pathogens detected"
+author: "Nikolina Walas, nwalas@berkeley.edu, Ben Arnold ben.arnold@ucsf.edu"
+date_created: "2024-12-19"
+date: "updated: `r Sys.time()`"
+output: 
+  html_document:
+    theme: default
+    highlight: pygments
+    code_folding: hide
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+---
+
+# Summary
+
+This analysis was done per reviewer feedback to investigate co-infections. 
+
+
+# Preamble 
+ 
+Load configuration file and public data
+
+```{r preamble, message = FALSE}
+#---------------------------------
+# Load configuration file
+#---------------------------------
+library(here)
+source(here("R","0-config.R"))
+```
+
+ Load Joined GPP TAC dataset
+
+```{r load gpp data}
+#---------------------------------
+# load public data
+#---------------------------------
+dmfi <- read_rds(here("data","ecomid_gpp_tac_comp_target_mfi_public_2025-01-07.rds"))
+
+```
+
+Generate summary pathogen counts by assay 
+```{r summarize pathogen counts by assay}
+#---------------------------------
+# count pathogens detected
+# exclude salmonella
+# there are thus 10 pathogens
+#---------------------------------
+dmfi <- dmfi %>% 
+  filter(pathogen != "Salmonella")
+
+table(dmfi$pathogen)
+length(unique(dmfi$pathogen))
+
+# summary count at the sample level (excluding Salmonella)
+# first take the max at each pathogen
+# then count
+count_pos <- dmfi %>% 
+  group_by(public_id, pathogen) %>% 
+  # take max by pathogen
+  mutate(gpp_pos01 = ifelse(gpp_pos == "POS",1,0),
+         tac_pos01 = ifelse(tac_pos == "POS",1,0)) %>%
+  summarise(gpp_pos = max(gpp_pos01),
+            tac_pos = max(tac_pos01), 
+            .group = "drop"
+            ) %>%
+  # now count for each sample
+  group_by(public_id) %>%
+  summarise(gpp_count = sum(gpp_pos), 
+            tac_count = sum(tac_pos),
+            .group = "drop"
+            ) 
+```
+
+# Plot (Salmonella excluded)
+```{r scatter plot}
+#---------------------------------
+# scatter with jittered points 
+#---------------------------------
+set.seed(234)
+p4 <- ggplot(count_pos, aes(x = gpp_count, y = tac_count)) + 
+  
+  # geom_smooth(se = FALSE, method = "glm", lwd=1, color = "orange") +
+  geom_point(alpha = 0) + 
+  geom_jitter(width = 0.1, height = 0.1, alpha = 0.4, color = "black")  +
+  geom_abline(slope=1, color = "gray20", linetype = "dashed") +
+  scale_x_continuous(breaks = c(0:5))  +
+  scale_y_continuous(breaks = c(0:5)) +
+  labs(title = "Number of pathogens detected by TAC and GPP",
+       subtitle = "Salmonella omitted from analysis",
+       y = "Number of pathogens detected by TAC", 
+       x = "Number of pathogens detected by GPP") +
+    coord_cartesian(xlim = c(0,5.1), ylim=c(0,5.1)) + 
+    theme_minimal()
+ 
+
+#p4
+
+ggMarginal(p4, type="histogram")
+```
+
+
+# SI Figure 3
+
+Examine distributions
+
+```{r distributions, warning = FALSE, fig.width = 6}
+#---------------------------------
+# pivot the data longer
+#---------------------------------
+dl_counts <- count_pos %>% 
+  pivot_longer(2:3, names_to = "assay", values_to = "npath") %>% 
+  mutate(assay_lab = ifelse(assay == "tac_count", "TAC","GPP"),
+         assay = factor(assay_lab, levels = c("TAC","GPP"))) %>%
+  select(-assay_lab) %>%
+  arrange(assay)
+
+
+#---------------------------------
+# box plot of number of pathogens detected by age
+#---------------------------------
+set.seed(123456)
+plot_npath_per_sample <- ggplot(data = dl_counts, aes(x = assay, color=assay)) +
+  geom_jitter(aes(y=npath), height = 0.1, width = 0.2, alpha = 0.3) +
+  geom_boxplot(aes(y=npath), outlier.shape = NA, color = "black", fill = NA, width = 0.5) + 
+  scale_y_continuous(breaks = seq(0,8,by=1)) +
+  scale_color_manual(values = cbpal[c(2,4)]) + 
+  labs(y = "Number of enteric pathogens detected", x = "Assay") +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank()
+  )
+# plot_npath_per_sample
+
+#---------------------------------
+# histogram of number o pathogens per sample
+#---------------------------------
+dl_counts2 <- dl_counts %>%
+  group_by(assay,npath) %>%
+  summarize(nobs = n(), .groups = "drop") %>%
+  group_by(assay) %>%
+  mutate(tot = sum(nobs),
+         pct = nobs/tot
+  ) 
+
+#---------------------------------
+# get all values of number of pathogens  
+#---------------------------------
+dl_counts3 <- dl_counts %>%
+  expand(assay,npath = full_seq(npath,1)) %>%
+  left_join(dl_counts2, join_by(assay,npath)) %>%
+  mutate(nobs = ifelse(is.na(nobs),0,nobs),
+         pct = ifelse(is.na(pct),0,pct)
+         )
+
+hist_npath_per_sample <- ggplot(data = dl_counts3, aes(x = npath, group = assay, fill=assay)) +
+  geom_bar(aes(y = pct), stat = "identity", position = "dodge") +
+  scale_fill_manual(values = cbpal[c(2,4)]) + 
+  scale_x_continuous(breaks = seq(0,5,by=1)) +
+  scale_y_continuous(breaks = seq(0,0.4,by=0.04), labels = seq(0,0.4,by=0.04)*100) +
+  labs(x = "Number of pathogens detected", y = "Percentage of samples (%)") +
+  coord_cartesian(ylim = c(0,0.4)) +
+  theme_minimal() +
+  theme(
+    legend.position = c(0.8,0.8),
+    panel.grid.minor.x = element_blank()
+  )
+# hist_npath_per_sample
+
+#---------------------------------
+# transpose the box plot
+# and make a composite plot
+#---------------------------------
+plot_npath_per_sample2 <- plot_npath_per_sample +
+  coord_flip(ylim=c(-0.5,5.5)) +
+  labs(y = "", x = "")
+# plot_npath_per_sample2
+
+plot_npath_composite <- hist_npath_per_sample + plot_npath_per_sample2 + plot_layout(nrow = 2, heights = c(1,0.2))
+plot_npath_composite
+
+
+ggsave(filename = here("output","ecomid_gpp_tac_num_pathogens_composite.png"), plot_npath_composite, device = "png",width=90,height=120, units="mm")
+
+```
+
+# Wilcoxon signed rank test
+
+The distributions are slightly different despite having identical medians and IQRs.
+
+```{r Wilcoxon signed rank test}
+#---------------------------------
+# Wilcoxon signed rank test
+#---------------------------------
+summary(count_pos$gpp_count)
+summary(count_pos$tac_count)
+w_test <- wilcox.test(count_pos$gpp_count, count_pos$tac_count, paired = TRUE, conf.int=TRUE, alternative = "two.sided")
+w_test
+
+```
+
+
+# Session Info
+```{r session info}
+sessionInfo()
+
+```

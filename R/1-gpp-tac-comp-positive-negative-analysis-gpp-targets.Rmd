@@ -1,0 +1,205 @@
+---
+title: "Enteric pathogen infection measured by GPP and TAC multiplex assays"
+subtitle: "Analysis of prevalence and agreement between assays at target level"
+author: "Nikolina Walas (nwalas@berkeley.edu), Ben Arnold (ben.arnold@ucsf.edu)"
+date: "updated: `r Sys.time()`"
+output: 
+  html_document:
+    theme: default
+    highlight: pygments
+    code_folding: hide
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+---
+
+# Load configuration file
+
+```{r preamble, message = FALSE}
+source("0-config.R")
+# library(gtsummary)
+```
+
+# Load Joined GPP TAC dataset
+
+```{r load gpp data}
+#---------------------------------
+# load formatted data
+# created by 1-gpp-tac-comp-data-processing.R
+#---------------------------------
+dmfi <- read_rds(here("data","ecomid_gpp_tac_comp_target_mfi_public_2025-01-07.rds"))
+```
+
+# Make 2x2 tables
+
+```{r summarize 2by2 tables}
+#-------------------------------
+# make 2x2 tables, 
+# one for each comparison
+#-------------------------------
+gpp_vs_tac <- table(dmfi$gpp_pos,dmfi$tac_pos,dmfi$gpp_target)
+
+#-------------------------------
+# stack the 2x2 tables into a 
+# k-row data frame
+# careful to get the pos/neg
+# in correct order (verified using print out from above)
+#-------------------------------
+gpp_vs_tac2 <- t(apply(gpp_vs_tac,3,function(x) as.vector(x)))
+gpp_vs_tac3 <- data.frame(
+  gpp_target = rownames(gpp_vs_tac2),
+  gpp_n_tac_n = gpp_vs_tac2[,1],
+  gpp_p_tac_n = gpp_vs_tac2[,2],
+  gpp_n_tac_p = gpp_vs_tac2[,3],
+  gpp_p_tac_p = gpp_vs_tac2[,4]) 
+rownames(gpp_vs_tac3) <- c() 
+   
+
+kbl(gpp_vs_tac3, col.names = c("GPP Target","GPP(-) TAC(-)","GPP(+) TAC(-)", "GPP(-) TAC(+)","GPP(+) TAC(+)")) %>%
+  kableExtra::kable_styling(bootstrap_options = "striped")
+```
+
+# Estimate prevalence and agreement
+
+Estimate prevalence and exact binomial confidence intervals for each pathogen using the GPP assay and the TAC assay. Also estimate exact binomial confidence intervals for agreement between the two assays.
+
+```{r estimate prevalence by GPP and TAC}
+#-------------------------------
+# estimate prevalence, agreement and 
+# exact binomial 95% CIs
+#-------------------------------
+gpp_vs_tac4 <- gpp_vs_tac3 %>%
+  mutate(ntot = gpp_n_tac_n + gpp_p_tac_n + gpp_n_tac_p + gpp_p_tac_p,
+         gpp_pos = gpp_p_tac_n + gpp_p_tac_p,
+         tac_pos = gpp_n_tac_p + gpp_p_tac_p,
+         nagree  = gpp_n_tac_n + gpp_p_tac_p) %>%
+  rowwise() %>%
+  mutate(gpp_prev = gpp_pos/ntot,
+         gpp_prev_min95 = binom.test(gpp_pos,ntot)$conf.int[1],
+         gpp_prev_max95 = binom.test(gpp_pos,ntot)$conf.int[2],
+         
+         tac_prev = tac_pos/ntot,
+         tac_prev_min95 = binom.test(tac_pos,ntot)$conf.int[1],
+         tac_prev_max95 = binom.test(tac_pos,ntot)$conf.int[2],
+         
+         agree_prev = nagree/ntot ,
+         agree_prev_min95 = binom.test(nagree,ntot)$conf.int[1],
+         agree_prev_max95 = binom.test(nagree,ntot)$conf.int[2],
+         )
+
+#-------------------------------
+# print a summary table
+# format the prev ests to print
+#-------------------------------
+prev_tab <- gpp_vs_tac4 %>%
+  # use GPP target sort order (set in config.R file)
+  mutate(gpp_target =factor(gpp_target, levels = target_levels)) %>%
+  mutate(gpp_prev_print = paste0(sprintf("%1.1f",gpp_prev*100),
+                                 " (",
+                                 sprintf("%1.1f",gpp_prev_min95*100),
+                                 ", ",
+                                 sprintf("%1.1f",gpp_prev_max95*100),
+                                 ")"),
+         tac_prev_print = paste0(sprintf("%1.1f",tac_prev*100),
+                                 " (",
+                                 sprintf("%1.1f",tac_prev_min95*100),
+                                 ", ",
+                                 sprintf("%1.1f",tac_prev_max95*100),
+                                 ")"),
+         agree_prev_print = paste0(sprintf("%1.1f",agree_prev*100),
+                                 " (",
+                                 sprintf("%1.1f",agree_prev_min95*100),
+                                 ", ",
+                                 sprintf("%1.1f",agree_prev_max95*100),
+                                 ")"),
+         )
+
+kbl(prev_tab %>% select(gpp_target, ntot, gpp_pos, gpp_prev_print, tac_pos, tac_prev_print, nagree, agree_prev_print), col.names = c("GPP Target","N","GPP pos","GPP Prev (95% CI)","TAC pos","TAC Prev (95% CI)", "N agree", "Agreement %")) %>%
+  kableExtra::kable_styling(bootstrap_options = "striped")
+
+```
+
+
+# Estimate kappa and McNemar's test
+
+Note: for McNemar's test, since the off-diagonal cells are <25, the test might be a bit liberal. See the **Variations** section here:
+https://en.wikipedia.org/wiki/McNemar%27s_test
+
+```{r estimate agreement, kappa, mcnemears test}
+#-------------------------------
+# use epiR::epi.kappa to estimate
+# agreement, kappa (95% CI) and
+# McNemar's test statistic
+#-------------------------------
+
+kappa_sum <- foreach(pathi = 1:dim(gpp_vs_tac)[3], .combine = rbind) %do% {
+  
+  # estimate all of the statistics using the epi.kappa function
+  est_i <- epiR::epi.kappa(gpp_vs_tac[,,pathi])
+  
+  # store results in a data frame row
+  res <- data.frame(gpp_target = rownames(gpp_vs_tac2)[pathi],
+                    agree_est = est_i$prop.agree$obs,
+                    agree_exp = est_i$prop.agree$exp,
+                    kappa = est_i$kappa$est,
+                    kappa_min95 = est_i$kappa$lower,
+                    kappa_max95 = est_i$kappa$upper,
+                    mcnemear_stat = est_i$mcnemar$test.statistic,
+                    mcnemar_p = est_i$mcnemar$p.value
+                    )
+  return(res)
+}
+
+#-------------------------------
+# format the kappa statistics
+#-------------------------------
+kappa_sum2 <- kappa_sum %>%
+  mutate(kappa_print = paste0(sprintf("%1.2f",kappa),
+                                 " (",
+                                 sprintf("%1.2f",kappa_min95),
+                                 ", ",
+                                 sprintf("%1.1f",kappa_max95),
+                                 ")")
+         )
+#-------------------------------
+# print summary statistics
+#-------------------------------
+kbl(kappa_sum2 %>% select(gpp_target, agree_est, kappa_print, mcnemar_p), digits = 3) %>%
+  kableExtra::kable_styling(bootstrap_options = "striped")
+
+```
+
+# Save estimates for final plots and tables
+```{r join estimates and save}
+#-------------------------------
+# join the statistics to the
+# earlier counts and prevalence
+# estimates
+#-------------------------------
+gpp_vs_tac5 <- prev_tab %>%
+  left_join(kappa_sum2, by = "gpp_target") %>%
+  # add taxa
+  mutate(
+    taxa = case_when(
+      gpp_target %in% c("Cryptosporidium","Entamoeba_histolytica","Giardia") ~ "Protozoa",
+      gpp_target %in% c("Adenovirus_40_41","Norovirus_GI","Norovirus_GII","Rotavirus_A") ~ "Viruses",
+      TRUE ~ as.character("Bacteria")
+    ), 
+    taxa = factor(taxa, levels=c("Viruses","Bacteria","Protozoa"))
+  ) %>%
+  select(taxa,gpp_target,everything())
+  
+
+write_rds(gpp_vs_tac5, file = here("output","gpp_vs_tac_gpp_target_estimates.rds"))
+write_csv(gpp_vs_tac5, file = here("output","gpp_vs_tac_gpp_target_estimates.csv"))
+```
+
+# Session info
+```{r session info}
+sessionInfo()
+```
+
+
+

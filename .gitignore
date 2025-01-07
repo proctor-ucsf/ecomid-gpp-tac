@@ -47,3 +47,16 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# R and Rmd output files
+*.Rout
+*.html
+
+# Mac system files
+*.DS_Store
+
+# Datasets
+*.rds
+*.csv
+
+
